@@ -5,10 +5,6 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     
-    antigravity-nix = {
-      url = "github:jacopone/antigravity-nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   outputs = { self, nixpkgs, flake-utils, antigravity-nix, ... }:
@@ -46,7 +42,6 @@ in {
             codium
             pkgs.gcc
             pkgs.python3
-            antigravity-nix.packages.${system}.default
           ];
 
           shellHook = ''
