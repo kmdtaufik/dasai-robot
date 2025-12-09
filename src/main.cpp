@@ -1,21 +1,22 @@
-// Fixed: ESP32-S3 Eyes + Touch + DHT11 + Blynk IoT
-// Fix: Explicitly defined Blynk Server to resolve "Connecting to 0.0.0.0" error
+// Fixed: ESP32-S3 Eyes + WiFiManager + Working Channel 11
+// Using confirmed working WiFi settings
 
-// #define BLYNK_TEMPLATE_ID ""
-// #define BLYNK_TEMPLATE_NAME ""
-// #define BLYNK_AUTH_TOKEN ""
-#include "secrets.h"
+#include "secrets.h" 
+// Ensure your secrets.h has BLYNK_AUTH_TOKEN defined
+
 #define BLYNK_PRINT Serial
+
+// --- FIX FOR "T_R" ERROR ---
+#define T_R WM_T_R_GUARD 
+#include <WiFiManager.h>
+#undef T_R 
+// ---------------------------
 
 #include "Face.h"
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <Arduino.h>
 #include <BlynkSimpleEsp32.h>
 #include <DHT.h>
-#include <WiFi.h>
-#include <WiFiClient.h>
-#include <Wire.h>
 
 // ---- OLED ----
 #define SCREEN_WIDTH 128
@@ -31,12 +32,12 @@ DHT dht(DHTPIN, DHTTYPE);
 // ---- TOUCH ----
 #define TOUCH_PIN 7
 
-// ---- WiFi & Blynk ----
-char ssid[] = "CPL";
-char pass[] = "12345678";
+// ---- WiFi Reset Button ----
+#define RESET_WIFI_PIN 0
+
 BlynkTimer timer;
 
-// ---- BITMAPS (Icons) ----
+// ---- BITMAPS ----
 const unsigned char PROGMEM icon_temp[] = {
     0x00, 0x00, 0x01, 0x80, 0x01, 0x80, 0x01, 0x80, 0x01, 0x80, 0x01,
     0x80, 0x01, 0x80, 0x01, 0x80, 0x05, 0x80, 0x07, 0x00, 0x0E, 0x70,
@@ -51,7 +52,6 @@ const unsigned char PROGMEM icon_humid[] = {
 enum Mode { EYES_MODE, HAPPY_MODE, WEATHER_MODE };
 Mode currentMode = EYES_MODE;
 
-// ---- State Vars ----
 unsigned long lastTouchTime = 0;
 bool waitingForSecondTap = false;
 const unsigned long doubleTapWindow = 400;
@@ -60,26 +60,14 @@ unsigned long lastTouchEvent = 0;
 unsigned long modeStateStartTime = 0;
 bool newModeEntered = false;
 
-// ---- FACE (eyes) ----
 Face *face;
 
-// ---- Blynk Sensor Sending ----
 void sendSensor() {
   float t = dht.readTemperature();
   float h = dht.readHumidity();
 
-  if (isnan(t) || isnan(h)) {
-    Serial.println("DHT Read Failed");
-    return;
-  }
+  if (isnan(t) || isnan(h)) return;
 
-  // Debug print to Serial
-  Serial.print("Sending to Blynk -> T: ");
-  Serial.print(t);
-  Serial.print(" H: ");
-  Serial.println(h);
-
-  // Only send if connected to avoid lag
   if (Blynk.connected()) {
     Blynk.virtualWrite(V0, t);
     Blynk.virtualWrite(V1, h);
@@ -89,61 +77,158 @@ void sendSensor() {
 // ------------- setup -------------
 void setup() {
   Serial.begin(115200);
+  delay(500);
+  
+  Serial.println("\n\n=== ESP32 Starting ===");
+
+  // Check if reset button is pressed
+  pinMode(RESET_WIFI_PIN, INPUT_PULLUP);
+  bool resetWiFi = (digitalRead(RESET_WIFI_PIN) == LOW);
 
   // 1. Init Display
   Wire.begin(41, 42);
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println("SSD1306 init failed");
-    while (1)
-      delay(1000);
+    Serial.println("SSD1306 allocation failed");
+    for(;;);
   }
+  
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
-  display.println("Booting...");
+  display.println("Starting...");
   display.display();
 
-  // 2. Manual Wi-Fi Connection
-  WiFi.begin(ssid, pass);
-
-  display.print("Wifi: ");
-  display.println(ssid);
-  display.display();
-
-  int timeout = 0;
-  // Wait up to 10 seconds
-  while (WiFi.status() != WL_CONNECTED && timeout < 20) {
-    delay(500);
-    Serial.print(".");
-    display.print(".");
+  // Handle WiFi Reset
+  if (resetWiFi) {
+    Serial.println("Reset button pressed - clearing WiFi");
+    display.clearDisplay();
+    display.setCursor(0, 0);
+    display.println("Resetting WiFi...");
     display.display();
-    timeout++;
+    
+    WiFiManager wm;
+    wm.resetSettings();
+    delay(2000);
+    ESP.restart();
   }
 
-  // 3. Connect to Blynk
-  if (WiFi.status() == WL_CONNECTED) {
-    display.println("");
-    display.println("CONNECTED!");
-    display.display();
+  // 2. WiFiManager with CHANNEL 11
+  WiFiManager wm;
+  
+  // CRITICAL: Set WiFi channel to 11 (the one that works!)
+  wm.setWiFiAPChannel(11);
+  
+  wm.setDebugOutput(true);
+  wm.setConfigPortalTimeout(300); // 5 minutes
 
-    // FIX: Explicitly set server to "blynk.cloud"
+  Serial.println("=== Starting WiFi Portal ===");
+  Serial.println("Network: ESP32-Setup");
+  Serial.println("Password: 12345678");
+  Serial.println("Channel: 11");
+  Serial.println("IP: 192.168.4.1");
+
+  // Display info
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println("WiFi Setup");
+  display.println("");
+  display.println("Connect to:");
+  display.setTextSize(2);
+  display.println("ESP32-Setup");
+  display.setTextSize(1);
+  display.println("");
+  display.println("Pass: 12345678");
+  display.println("Then: 192.168.4.1");
+  display.display();
+
+  // autoConnect with password on channel 11
+  Serial.println("Calling autoConnect...");
+  bool res = wm.autoConnect("ESP32-Setup", "12345678"); 
+  Serial.print("autoConnect returned: ");
+  Serial.println(res ? "SUCCESS" : "FAILED");
+
+  if(!res) {
+    Serial.println("WiFi timeout - running offline");
+    display.clearDisplay();
+    display.setCursor(0,0);
+    display.setTextSize(1);
+    display.println("WiFi Timeout");
+    display.println("");
+    display.println("Running Offline");
+    display.println("");
+    display.println("To retry:");
+    display.println("Hold GPIO0 & reset");
+    display.display();
+  } 
+  else {
+    Serial.println("=== WiFi Connected Successfully! ===");
+    Serial.print("SSID: ");
+    Serial.println(WiFi.SSID());
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("Signal Strength: ");
+    Serial.print(WiFi.RSSI());
+    Serial.println(" dBm");
+    
+    display.clearDisplay();
+    display.setCursor(0,0);
+    display.setTextSize(1);
+    display.println("WiFi Connected!");
+    display.println("");
+    display.print("SSID: ");
+    display.println(WiFi.SSID());
+    display.print("IP: ");
+    display.println(WiFi.localIP());
+    display.println("");
+    display.println("Connecting Blynk...");
+    display.display();
+    delay(1000);
+    
+    // Connect to Blynk
+    Serial.println("Connecting to Blynk...");
     Blynk.config(BLYNK_AUTH_TOKEN, "blynk.cloud", 80);
+    
+    // Try connecting with timeout
+    unsigned long blynkStart = millis();
     Blynk.connect();
-  } else {
-    display.println("");
-    display.println("WIFI FAILED!");
-    display.println("Offline Mode");
-    display.display();
+    
+    // Wait up to 10 seconds for Blynk
+    while (!Blynk.connected() && millis() - blynkStart < 10000) {
+      delay(100);
+    }
+    
+    if (Blynk.connected()) {
+      Serial.println("Blynk connected successfully!");
+      display.clearDisplay();
+      display.setCursor(0,0);
+      display.println("All Connected!");
+      display.println("");
+      display.println("WiFi: OK");
+      display.println("Blynk: OK");
+      display.display();
+    } else {
+      Serial.println("Blynk connection failed");
+      display.clearDisplay();
+      display.setCursor(0,0);
+      display.println("WiFi: OK");
+      display.println("Blynk: FAILED");
+      display.println("");
+      display.println("Check token");
+      display.display();
+    }
   }
-  delay(1000);
+  delay(3000);
 
-  // 4. Init Hardware
+  // 3. Init Hardware
+  Serial.println("Initializing hardware...");
   dht.begin();
   pinMode(TOUCH_PIN, INPUT);
   timer.setInterval(2000L, sendSensor);
 
-  // 5. Init Face
+  // 4. Init Face
+  Serial.println("Initializing face...");
   face = new Face(128, 64, 40);
   face->Expression.GoTo_Normal();
   face->RandomBehavior = true;
@@ -152,16 +237,17 @@ void setup() {
 
   display.clearDisplay();
   display.display();
+  
+  Serial.println("=== Ready! ===");
 }
 
-// ------------- helper: show weather screen -------------
+// ------------- Weather Screen -------------
 void drawWeatherScreen() {
   float t = dht.readTemperature();
   float h = dht.readHumidity();
 
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
-
   display.setTextSize(1);
   display.setCursor(28, 0);
   display.println("WEATHER");
@@ -172,7 +258,6 @@ void drawWeatherScreen() {
     display.println("Sensor Error");
   } else {
     display.cp437(true);
-
     // Temp
     display.drawBitmap(10, 18, icon_temp, 16, 16, SSD1306_WHITE);
     display.setTextSize(2);
@@ -182,7 +267,6 @@ void drawWeatherScreen() {
     display.write(248);
     display.setTextSize(2);
     display.print("C");
-
     // Humidity
     display.drawBitmap(10, 42, icon_humid, 16, 16, SSD1306_WHITE);
     display.setTextSize(2);
@@ -193,14 +277,12 @@ void drawWeatherScreen() {
   display.display();
 }
 
-// ------------- touch handling -------------
+// ------------- Touch -------------
 void handleTouch() {
   int t = digitalRead(TOUCH_PIN);
-
   if (t == HIGH) {
     unsigned long now = millis();
-    if (now - lastTouchEvent < debounceMs)
-      return;
+    if (now - lastTouchEvent < debounceMs) return;
     lastTouchEvent = now;
 
     if (currentMode != EYES_MODE) {
@@ -224,7 +306,6 @@ void handleTouch() {
       }
     }
   }
-
   if (waitingForSecondTap && (millis() - lastTouchTime > doubleTapWindow)) {
     waitingForSecondTap = false;
     currentMode = HAPPY_MODE;
@@ -233,13 +314,10 @@ void handleTouch() {
   }
 }
 
-// ------------- main loop -------------
 void loop() {
-  // Only run Blynk if connected
   if (WiFi.status() == WL_CONNECTED) {
     Blynk.run();
   }
-
   timer.run();
   handleTouch();
 
@@ -247,7 +325,6 @@ void loop() {
   case EYES_MODE:
     face->Update();
     break;
-
   case HAPPY_MODE:
     if (newModeEntered) {
       face->Expression.GoTo_Happy();
@@ -259,7 +336,6 @@ void loop() {
       currentMode = EYES_MODE;
     }
     break;
-
   case WEATHER_MODE:
     if (newModeEntered) {
       drawWeatherScreen();
@@ -269,5 +345,5 @@ void loop() {
       currentMode = EYES_MODE;
     }
     break;
-  }
+  } 
 }
