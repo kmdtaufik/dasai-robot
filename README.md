@@ -31,7 +31,7 @@ This project was developed by:
 - **[MD HABIBULLAH](https://github.com/Md-Habibullah-99)**
 
 ## Circuit Diagram
-*(Place your circuit diagram here)*
+![image](data/circuit_diagram.png)
 
 > [!NOTE]
 > Ensure your `secrets.h` file contains your valid `BLYNK_AUTH_TOKEN` before compiling.
